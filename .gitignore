@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+results/*
+!results/.gitkeep
+*.parquet
+.pytest_cache/
+.venv/
+.env
+.coverage
+htmlcov/

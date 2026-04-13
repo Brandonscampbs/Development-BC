@@ -1,0 +1,49 @@
+name: CT-17EV
+year: 2026
+description: "2026 competition car - 100S4P P50B, 20 lbs lighter"
+
+vehicle:
+  mass_kg: 261.0
+  frontal_area_m2: 1.2
+  drag_coefficient: 0.5
+  rolling_resistance: 0.015
+  wheelbase_m: 1.53
+
+powertrain:
+  motor_speed_max_rpm: 2900
+  brake_speed_rpm: 2400
+  torque_limit_inverter_nm: 85.0
+  torque_limit_lvcu_nm: 150.0
+  iq_limit_a: 170.0
+  id_limit_a: 30.0
+  gear_ratio: 3.5
+  drivetrain_efficiency: 0.92
+
+battery:
+  cell_type: "P50B"
+  topology:
+    series: 100
+    parallel: 4
+  cell_voltage_min_v: 2.50
+  cell_voltage_max_v: 4.20
+  discharged_soc_pct: 2.0
+  soc_taper:
+    threshold_pct: 85.0
+    rate_a_per_pct: 1.0
+  discharge_limits:
+    - temp_c: 30.0
+      max_current_a: 100.0
+    - temp_c: 35.0
+      max_current_a: 85.0
+    - temp_c: 40.0
+      max_current_a: 65.0
+    - temp_c: 45.0
+      max_current_a: 55.0
+    - temp_c: 50.0
+      max_current_a: 45.0
+    - temp_c: 55.0
+      max_current_a: 40.0
+    - temp_c: 60.0
+      max_current_a: 35.0
+    - temp_c: 65.0
+      max_current_a: 0.0

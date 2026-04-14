@@ -4,6 +4,7 @@ from fsae_sim.vehicle.powertrain_model import PowertrainModel
 from fsae_sim.vehicle.battery import BatteryConfig, DischargeLimitPoint
 from fsae_sim.vehicle.tire_model import PacejkaTireModel
 from fsae_sim.vehicle.load_transfer import LoadTransferModel
+from fsae_sim.vehicle.cornering_solver import CorneringSolver
 
 __all__ = [
     "VehicleConfig",
@@ -16,4 +17,5 @@ __all__ = [
     "DischargeLimitPoint",
     "PacejkaTireModel",
     "LoadTransferModel",
+    "CorneringSolver",
 ]

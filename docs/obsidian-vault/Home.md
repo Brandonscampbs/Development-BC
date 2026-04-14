@@ -47,6 +47,7 @@ tags: [home, index]
 - [[Battery Physics]] — Equivalent-circuit model, OCV, internal resistance
 - [[Motor Torque Curve]] — Constant-torque and field-weakening regions
 - [[Aerodynamic Forces]] — Drag, rolling resistance, grade forces
+- [[Simulator Validation Comparison]] — Our physics vs. OpenLAP, OptimumLap, TORCS, and more
 
 ### Project Info
 - [[Getting Started]] — How to set up and run the simulation

@@ -287,14 +287,16 @@ class CalibratedStrategy(DriverStrategy):
         self._zones = list(zones)
         self._num_segments = num_segments
 
-        # Build flat lookup: segment_idx -> (action, intensity)
-        self._segment_actions: list[tuple[ControlAction, float]] = [
-            (ControlAction.COAST, 0.0)
+        # Build flat lookup: segment_idx -> (action, intensity, max_speed_ms)
+        self._segment_actions: list[tuple[ControlAction, float, float]] = [
+            (ControlAction.COAST, 0.0, 0.0)
         ] * num_segments
         for zone in zones:
             for seg_idx in range(zone.segment_start, zone.segment_end + 1):
                 if 0 <= seg_idx < num_segments:
-                    self._segment_actions[seg_idx] = (zone.action, zone.intensity)
+                    self._segment_actions[seg_idx] = (
+                        zone.action, zone.intensity, zone.max_speed_ms,
+                    )
 
     @property
     def zones(self) -> list[DriverZone]:
@@ -302,7 +304,7 @@ class CalibratedStrategy(DriverStrategy):
 
     def decide(self, state: SimState, upcoming: list[Segment]) -> ControlCommand:
         idx = state.segment_idx % self._num_segments
-        action, intensity = self._segment_actions[idx]
+        action, intensity, max_speed_ms = self._segment_actions[idx]
 
         if action == ControlAction.THROTTLE:
             return ControlCommand(action, throttle_pct=intensity, brake_pct=0.0)
@@ -369,6 +371,7 @@ class CalibratedStrategy(DriverStrategy):
                     distance_start_m=z.distance_start_m,
                     distance_end_m=z.distance_end_m,
                     label=z.label,
+                    max_speed_ms=z.max_speed_ms,
                 ))
             else:
                 new_zones.append(z)
@@ -388,7 +391,7 @@ class CalibratedStrategy(DriverStrategy):
         distance_col: str = "Distance on GPS Speed",
         throttle_threshold: float = 5.0,
         brake_threshold: float = 2.0,
-        merge_tolerance: float = 0.05,
+        merge_tolerance: float = 0.15,
         name: str = "calibrated",
     ) -> CalibratedStrategy:
         """Calibrate from AiM telemetry.

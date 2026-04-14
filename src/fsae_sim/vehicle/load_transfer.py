@@ -41,7 +41,7 @@ class LoadTransferModel:
         vehicle: VehicleParams,
         suspension: SuspensionConfig,
         cg_height_m: float = 0.2794,
-        weight_dist_front: float = 0.45,
+        weight_dist_front: float = 0.53,
         downforce_dist_front: float = 0.61,
     ) -> None:
         self._vehicle = vehicle

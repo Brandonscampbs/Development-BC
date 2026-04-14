@@ -31,6 +31,7 @@ class DriverZone:
     distance_start_m: float
     distance_end_m: float
     label: str
+    max_speed_ms: float = 0.0  # observed peak speed in this zone (m/s), 0 = no limit
 
 
 # ---------------------------------------------------------------------------
@@ -55,11 +56,20 @@ def extract_per_segment_actions(
 ) -> pd.DataFrame:
     """Sample telemetry at each segment midpoint and classify actions.
 
+    Classifies each segment per-lap independently, then aggregates across
+    laps using majority vote for action and median for intensity. This
+    prevents cross-lap averaging from washing out coast/throttle contrast.
+
+    If lap boundaries cannot be detected (e.g. synthetic data without GPS),
+    falls back to single-pass classification using all data.
+
     Args:
         aim_df: AiM telemetry DataFrame with columns: Distance on GPS Speed,
             GPS Speed, Throttle Pos, FBrakePressure, RBrakePressure.
         track: Track geometry with segments.
-        laps: Which laps to average. None = use all data.
+        laps: Which lap indices (0-based into detected laps) to average.
+            None = auto-select non-outlier laps (skip first, skip short laps,
+            skip driver-change lap).
         throttle_threshold: Throttle position (%) above which = THROTTLE.
         brake_threshold: Brake pressure (bar) above which = BRAKE.
 
@@ -68,6 +78,219 @@ def extract_per_segment_actions(
         curvature, mean_throttle_pct, mean_brake_bar, mean_speed_kmh,
         action, intensity.
     """
+    # Try to detect lap boundaries for per-lap classification
+    lap_boundaries = _detect_lap_boundaries_safe(aim_df)
+
+    if lap_boundaries and len(lap_boundaries) >= 2:
+        return _extract_per_lap_then_aggregate(
+            aim_df, track, lap_boundaries,
+            laps=laps,
+            throttle_threshold=throttle_threshold,
+            brake_threshold=brake_threshold,
+        )
+    else:
+        # Fallback for synthetic/simple data: single-pass
+        return _extract_single_pass(
+            aim_df, track,
+            throttle_threshold=throttle_threshold,
+            brake_threshold=brake_threshold,
+        )
+
+
+def _detect_lap_boundaries_safe(
+    aim_df: pd.DataFrame,
+) -> list[tuple[int, int, float]]:
+    """Detect lap boundaries, returning empty list on failure."""
+    if "GPS Latitude" not in aim_df.columns:
+        return []
+    try:
+        from fsae_sim.analysis.validation import detect_lap_boundaries
+        return detect_lap_boundaries(aim_df)
+    except Exception:
+        return []
+
+
+def _extract_per_lap_then_aggregate(
+    aim_df: pd.DataFrame,
+    track: Track,
+    lap_boundaries: list[tuple[int, int, float]],
+    *,
+    laps: list[int] | None = None,
+    throttle_threshold: float = 5.0,
+    brake_threshold: float = 2.0,
+) -> pd.DataFrame:
+    """Classify per-lap, then aggregate across laps with majority vote.
+
+    Uses LVCU Torque Req (if available) for throttle intensity instead of
+    raw pedal position, since the pedal-to-torque mapping in the real car
+    is nonlinear (LVCU limit 150 Nm, inverter clips to 85 Nm). This ensures
+    the sim's ``throttle_pct * max_torque(rpm)`` produces the same force as
+    the real car's torque request.
+    """
+    num_segments = track.num_segments
+
+    # Check if we have LVCU torque data for better intensity calibration
+    has_torque = "LVCU Torque Req" in aim_df.columns
+
+    # Compute inverter torque limit for normalizing torque → throttle_pct
+    # The sim uses: drive_force = throttle_pct * max_motor_torque(rpm)
+    # where max_motor_torque = min(inverter, lvcu) = 85 Nm below brake_speed.
+    # So to match: throttle_pct = actual_torque / 85
+    _INVERTER_TORQUE_LIMIT = 85.0
+
+    # Select which laps to use
+    if laps is not None:
+        selected = [lap_boundaries[i] for i in laps if i < len(lap_boundaries)]
+    else:
+        selected = []
+        median_dist = float(np.median([d for _, _, d in lap_boundaries]))
+        for i, (s, e, d) in enumerate(lap_boundaries):
+            if i == 0:
+                continue
+            if abs(d - median_dist) > median_dist * 0.15:
+                continue
+            selected.append((s, e, d))
+
+    if not selected:
+        selected = lap_boundaries
+
+    # Compute brake normalization across all moving data
+    speed_all = aim_df["GPS Speed"].values
+    moving = speed_all > 5.0
+    front_brake_all = aim_df["FBrakePressure"].values
+    rear_brake_all = aim_df["RBrakePressure"].values
+    brake_all = np.maximum(front_brake_all, rear_brake_all)
+    nonzero_brake = brake_all[moving & (brake_all > 0)]
+    brake_norm = float(np.percentile(nonzero_brake, 99)) if len(nonzero_brake) > 0 else 1.0
+    brake_norm = max(brake_norm, 1.0)
+
+    # Per-lap, per-segment classification
+    action_codes = []
+    intensity_vals = []  # normalized intensity for the winning action
+    throttle_vals = []   # raw throttle % for reporting
+    brake_vals = []
+    speed_vals = []
+
+    for start_idx, end_idx, _ in selected:
+        lap_df = aim_df.iloc[start_idx:end_idx]
+        lap_dist_raw = lap_df["Distance on GPS Speed"].values
+        lap_d = lap_dist_raw - lap_dist_raw[0]
+        lap_throttle = lap_df["Throttle Pos"].values
+        lap_speed = lap_df["GPS Speed"].values
+        lap_fbr = lap_df["FBrakePressure"].values
+        lap_rbr = lap_df["RBrakePressure"].values
+        lap_brake = np.maximum(lap_fbr, lap_rbr)
+
+        if has_torque:
+            lap_torque = lap_df["LVCU Torque Req"].values
+        else:
+            lap_torque = None
+
+        lap_actions = np.zeros(num_segments, dtype=int)
+        lap_intensities = np.zeros(num_segments)
+        lap_throttles = np.zeros(num_segments)
+        lap_brakes = np.zeros(num_segments)
+        lap_speeds = np.zeros(num_segments)
+
+        for seg in track.segments:
+            mid = seg.distance_start_m + seg.length_m / 2.0
+            half_bin = seg.length_m / 2.0
+
+            mask = (lap_d >= mid - half_bin) & (lap_d < mid + half_bin)
+            if not np.any(mask):
+                nearest_idx = np.argmin(np.abs(lap_d - mid))
+                mask = np.zeros(len(lap_d), dtype=bool)
+                mask[nearest_idx] = True
+
+            seg_throttle = float(np.median(lap_throttle[mask]))
+            seg_brake = float(np.median(lap_brake[mask]))
+            seg_speed = float(np.mean(lap_speed[mask]))
+
+            if seg_brake > brake_threshold:
+                lap_actions[seg.index] = 2
+                lap_intensities[seg.index] = float(np.clip(seg_brake / brake_norm, 0.0, 1.0))
+            elif seg_throttle > throttle_threshold:
+                lap_actions[seg.index] = 1
+                # Use torque-based intensity if available
+                if lap_torque is not None:
+                    seg_torque = float(np.median(np.clip(lap_torque[mask], 0, None)))
+                    lap_intensities[seg.index] = float(np.clip(
+                        seg_torque / _INVERTER_TORQUE_LIMIT, 0.0, 1.0,
+                    ))
+                else:
+                    lap_intensities[seg.index] = float(np.clip(seg_throttle / 100.0, 0.0, 1.0))
+            else:
+                lap_actions[seg.index] = 0
+                lap_intensities[seg.index] = 0.0
+
+            lap_throttles[seg.index] = seg_throttle
+            lap_brakes[seg.index] = seg_brake
+            lap_speeds[seg.index] = seg_speed
+
+        action_codes.append(lap_actions)
+        intensity_vals.append(lap_intensities)
+        throttle_vals.append(lap_throttles)
+        brake_vals.append(lap_brakes)
+        speed_vals.append(lap_speeds)
+
+    # Stack into arrays: (num_laps, num_segments)
+    action_matrix = np.array(action_codes)
+    intensity_matrix = np.array(intensity_vals)
+    throttle_matrix = np.array(throttle_vals)
+    brake_matrix = np.array(brake_vals)
+    speed_matrix = np.array(speed_vals)
+
+    # Aggregate: majority vote for action, median for intensity
+    rows = []
+    for seg in track.segments:
+        i = seg.index
+        mid = seg.distance_start_m + seg.length_m / 2.0
+
+        action_col = action_matrix[:, i]
+        counts = np.bincount(action_col, minlength=3)
+        winner = int(np.argmax(counts))
+
+        # Median intensity across laps where the winning action was chosen
+        winner_mask = action_col == winner
+        if np.any(winner_mask):
+            med_intensity = float(np.median(intensity_matrix[:, i][winner_mask]))
+        else:
+            med_intensity = float(np.median(intensity_matrix[:, i]))
+
+        med_throttle = float(np.median(throttle_matrix[:, i]))
+        med_brake = float(np.median(brake_matrix[:, i]))
+        mean_speed = float(np.mean(speed_matrix[:, i]))
+
+        if winner == 2:
+            action = ControlAction.BRAKE
+        elif winner == 1:
+            action = ControlAction.THROTTLE
+        else:
+            action = ControlAction.COAST
+            med_intensity = 0.0
+
+        rows.append({
+            "segment_idx": i,
+            "distance_m": mid,
+            "curvature": seg.curvature,
+            "mean_throttle_pct": med_throttle,
+            "mean_brake_bar": med_brake,
+            "mean_speed_kmh": mean_speed,
+            "action": action,
+            "intensity": med_intensity,
+        })
+
+    return pd.DataFrame(rows)
+
+
+def _extract_single_pass(
+    aim_df: pd.DataFrame,
+    track: Track,
+    *,
+    throttle_threshold: float = 5.0,
+    brake_threshold: float = 2.0,
+) -> pd.DataFrame:
+    """Single-pass extraction for synthetic data without lap boundaries."""
     lap_dist = track.total_distance_m
     dist = aim_df["Distance on GPS Speed"].values
     throttle = aim_df["Throttle Pos"].values
@@ -77,10 +300,8 @@ def extract_per_segment_actions(
     rear_brake = aim_df["RBrakePressure"].values
     brake_pressure = np.maximum(front_brake, rear_brake)
 
-    # Map telemetry distance to within-lap distance
     telem_lap_dist = dist % lap_dist
 
-    # Compute 99th percentile of nonzero brake for normalization
     nonzero_brake = brake_pressure[brake_pressure > 0]
     brake_norm = float(np.percentile(nonzero_brake, 99)) if len(nonzero_brake) > 0 else 1.0
     brake_norm = max(brake_norm, 1.0)
@@ -90,10 +311,8 @@ def extract_per_segment_actions(
         mid = seg.distance_start_m + seg.length_m / 2.0
         half_bin = seg.length_m / 2.0
 
-        # Find telemetry samples within this segment
         mask = (telem_lap_dist >= mid - half_bin) & (telem_lap_dist < mid + half_bin)
         if not np.any(mask):
-            # Fallback: nearest sample
             nearest_idx = np.argmin(np.abs(telem_lap_dist - mid))
             mask = np.zeros(len(dist), dtype=bool)
             mask[nearest_idx] = True
@@ -102,7 +321,6 @@ def extract_per_segment_actions(
         mean_brake = float(np.mean(brake_pressure[mask]))
         mean_speed = float(np.mean(speed[mask]))
 
-        # Classify action
         if mean_brake > brake_threshold:
             action = ControlAction.BRAKE
             intensity = float(np.clip(mean_brake / brake_norm, 0.0, 1.0))
@@ -131,7 +349,7 @@ def collapse_to_zones(
     segment_actions: pd.DataFrame,
     track: Track,
     *,
-    merge_tolerance: float = 0.05,
+    merge_tolerance: float = 0.15,
 ) -> list[DriverZone]:
     """Collapse per-segment actions into contiguous zones.
 
@@ -195,6 +413,15 @@ def collapse_to_zones(
 
         prev_was_curved = is_curved
 
+        # Compute observed max speed for this zone (p90 across segments)
+        if "mean_speed_kmh" in segment_actions.columns:
+            zone_speeds = segment_actions["mean_speed_kmh"].values[z_start:z_end + 1]
+            # Use 90th percentile + small margin as the speed cap
+            max_speed_kmh = float(np.percentile(zone_speeds, 90)) * 1.05
+            max_speed_ms = max_speed_kmh / 3.6
+        else:
+            max_speed_ms = 0.0
+
         zones.append(DriverZone(
             zone_id=z_idx,
             segment_start=seg_start,
@@ -204,6 +431,7 @@ def collapse_to_zones(
             distance_start_m=dist_start,
             distance_end_m=dist_end,
             label=label,
+            max_speed_ms=max_speed_ms,
         ))
 
     return zones

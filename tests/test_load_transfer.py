@@ -59,7 +59,7 @@ def model(vehicle: VehicleParams, suspension: SuspensionConfig) -> LoadTransferM
         vehicle=vehicle,
         suspension=suspension,
         cg_height_m=0.2794,
-        weight_dist_front=0.45,
+        weight_dist_front=0.53,
         downforce_dist_front=0.61,
     )
 
@@ -73,12 +73,12 @@ class TestStaticLoads:
     """Static weight distribution tests."""
 
     def test_static_load_values(self, model: LoadTransferModel) -> None:
-        """FL=FR=613.62, RL=RR=749.97 from 278*9.81, 45/55 split."""
+        """FL=FR=722.70, RL=RR=640.89 from 278*9.81, 53/47 split."""
         fl, fr, rl, rr = model.static_loads()
-        assert fl == pytest.approx(613.62, abs=0.01)
-        assert fr == pytest.approx(613.62, abs=0.01)
-        assert rl == pytest.approx(749.97, abs=0.01)
-        assert rr == pytest.approx(749.97, abs=0.01)
+        assert fl == pytest.approx(722.70, abs=0.01)
+        assert fr == pytest.approx(722.70, abs=0.01)
+        assert rl == pytest.approx(640.89, abs=0.01)
+        assert rr == pytest.approx(640.89, abs=0.01)
 
     def test_static_sum_equals_weight(self, model: LoadTransferModel) -> None:
         """Sum of all four tires must equal total vehicle weight."""
@@ -91,11 +91,11 @@ class TestStaticLoads:
         assert fl == pytest.approx(fr, abs=1e-10)
         assert rl == pytest.approx(rr, abs=1e-10)
 
-    def test_static_rear_heavier(self, model: LoadTransferModel) -> None:
-        """55% rear weight distribution means rear tires carry more."""
+    def test_static_front_heavier(self, model: LoadTransferModel) -> None:
+        """53% front weight distribution means front tires carry more."""
         fl, fr, rl, rr = model.static_loads()
-        assert rl > fl
-        assert rr > fr
+        assert fl > rl
+        assert fr > rr
 
 
 # ---------------------------------------------------------------------------
@@ -189,19 +189,19 @@ class TestLateralTransfer:
         assert dr == pytest.approx(0.0, abs=1e-10)
 
     def test_lateral_1g_front_value(self, model: LoadTransferModel) -> None:
-        """1g lateral at 0 speed: front transfer = 315.47 N."""
+        """1g lateral at 0 speed: front transfer = 329.49 N."""
         df, dr = model.lateral_transfer(1.0, 0.0)
-        assert df == pytest.approx(315.47, abs=0.01)
+        assert df == pytest.approx(329.49, abs=0.01)
 
     def test_lateral_1g_rear_value(self, model: LoadTransferModel) -> None:
-        """1g lateral at 0 speed: rear transfer = 329.88 N."""
+        """1g lateral at 0 speed: rear transfer = 315.55 N."""
         df, dr = model.lateral_transfer(1.0, 0.0)
-        assert dr == pytest.approx(329.88, abs=0.01)
+        assert dr == pytest.approx(315.55, abs=0.01)
 
-    def test_lateral_rear_greater_than_front(self, model: LoadTransferModel) -> None:
-        """Stiffer rear roll bar => more lateral transfer on rear axle."""
+    def test_lateral_front_greater_than_rear(self, model: LoadTransferModel) -> None:
+        """53% front weight distribution shifts more lateral transfer to front axle."""
         df, dr = model.lateral_transfer(1.0, 0.0)
-        assert dr > df
+        assert df > dr
 
     def test_lateral_moment_balance(self, model: LoadTransferModel) -> None:
         """delta_f*track_f + delta_r*track_r = m*g*lat_g*cg_height."""
@@ -260,13 +260,13 @@ class TestTireLoads:
         assert rr >= 0.0
 
     def test_1p5g_braking_values(self, model: LoadTransferModel) -> None:
-        """1.5g braking loads: FL=FR=982.55, RL=RR=381.04."""
+        """1.5g braking loads: FL=FR=1091.64, RL=RR=271.95."""
         loads = model.tire_loads(speed_ms=0.0, lateral_g=0.0, longitudinal_g=-1.5)
         fl, fr, rl, rr = loads
-        assert fl == pytest.approx(982.55, abs=0.01)
-        assert fr == pytest.approx(982.55, abs=0.01)
-        assert rl == pytest.approx(381.04, abs=0.01)
-        assert rr == pytest.approx(381.04, abs=0.01)
+        assert fl == pytest.approx(1091.64, abs=0.01)
+        assert fr == pytest.approx(1091.64, abs=0.01)
+        assert rl == pytest.approx(271.95, abs=0.01)
+        assert rr == pytest.approx(271.95, abs=0.01)
 
     def test_right_turn_left_tires_gain(self, model: LoadTransferModel) -> None:
         """Positive lateral_g (right turn) loads left tires more."""

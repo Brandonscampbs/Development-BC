@@ -69,7 +69,7 @@ All parameters from DSS, loaded via config:
 - CG height: 279.4 mm (physically confirmed)
 - Wheelbase: 1549 mm
 - Front track: 1194 mm, rear track: 1168 mm
-- Static mass distribution: 92.4 / 117.6 kg (front/rear, car only); 45% front with driver
+- Static mass distribution: 53% front with driver
 - Roll stiffness: 238 Nm/deg front, 258 Nm/deg rear
 - Roll center heights: 88.9 mm front, 63.5 mm rear (static)
 - Aero: 625 N downforce at 80 kph, 61% front, 431 N drag at 80 kph

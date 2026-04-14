@@ -3,6 +3,7 @@ from fsae_sim.vehicle.powertrain import PowertrainConfig
 from fsae_sim.vehicle.powertrain_model import PowertrainModel
 from fsae_sim.vehicle.battery import BatteryConfig, DischargeLimitPoint
 from fsae_sim.vehicle.tire_model import PacejkaTireModel
+from fsae_sim.vehicle.load_transfer import LoadTransferModel
 
 __all__ = [
     "VehicleConfig",
@@ -14,4 +15,5 @@ __all__ = [
     "BatteryConfig",
     "DischargeLimitPoint",
     "PacejkaTireModel",
+    "LoadTransferModel",
 ]

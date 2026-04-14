@@ -19,6 +19,8 @@ import re
 from pathlib import Path
 from typing import Union
 
+from scipy.optimize import minimize_scalar
+
 
 class PacejkaTireModel:
     """PAC2002 Pacejka tire model loaded from a .tir file.
@@ -404,14 +406,12 @@ class PacejkaTireModel:
         Returns:
             Peak |Fy| (N), always positive.
         """
-        n_points = 500
-        max_fy = 0.0
-        for i in range(n_points + 1):
-            alpha = -math.pi / 2.0 + i * math.pi / n_points
-            fy = abs(self.lateral_force(alpha, normal_load_n, camber_rad))
-            if fy > max_fy:
-                max_fy = fy
-        return max_fy
+        result = minimize_scalar(
+            lambda alpha: -abs(self.lateral_force(alpha, normal_load_n, camber_rad)),
+            bounds=(-math.pi / 2.0, math.pi / 2.0),
+            method="bounded",
+        )
+        return -result.fun
 
     def peak_longitudinal_force(
         self,
@@ -427,14 +427,12 @@ class PacejkaTireModel:
         Returns:
             Peak |Fx| (N), always positive.
         """
-        n_points = 500
-        max_fx = 0.0
-        for i in range(n_points + 1):
-            kappa = -1.0 + i * 2.0 / n_points
-            fx = abs(self.longitudinal_force(kappa, normal_load_n, camber_rad))
-            if fx > max_fx:
-                max_fx = fx
-        return max_fx
+        result = minimize_scalar(
+            lambda kappa: -abs(self.longitudinal_force(kappa, normal_load_n, camber_rad)),
+            bounds=(-1.0, 1.0),
+            method="bounded",
+        )
+        return -result.fun
 
     # ------------------------------------------------------------------
     # Loaded radius

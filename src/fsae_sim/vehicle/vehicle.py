@@ -46,12 +46,15 @@ class SuspensionConfig:
 @dataclass(frozen=True)
 class VehicleConfig:
     """Complete vehicle configuration loaded from YAML."""
+
     name: str
     year: int
     description: str
     vehicle: VehicleParams
     powertrain: PowertrainConfig
     battery: BatteryConfig
+    tire: TireConfig | None = None
+    suspension: SuspensionConfig | None = None
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "VehicleConfig":
@@ -60,6 +63,9 @@ class VehicleConfig:
         with open(path) as f:
             data = yaml.safe_load(f)
 
+        tire_data = data.get("tire")
+        suspension_data = data.get("suspension")
+
         return cls(
             name=data["name"],
             year=data["year"],
@@ -67,4 +73,6 @@ class VehicleConfig:
             vehicle=VehicleParams(**data["vehicle"]),
             powertrain=PowertrainConfig(**data["powertrain"]),
             battery=BatteryConfig.from_dict(data["battery"]),
+            tire=TireConfig(**tire_data) if tire_data is not None else None,
+            suspension=SuspensionConfig(**suspension_data) if suspension_data is not None else None,
         )

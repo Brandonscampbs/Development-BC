@@ -303,3 +303,53 @@ class TestEffectiveInertia:
         v_with = dynamics_with_inertia.max_cornering_speed(kappa)
         v_without = dyn_no_inertia.max_cornering_speed(kappa)
         assert v_with == pytest.approx(v_without, abs=0.01)
+
+
+class TestCorneringDrag:
+    """Test cornering_drag() in legacy mode (no tire model, analytical fallback)."""
+
+    def test_zero_curvature_returns_zero(self, dynamics):
+        assert dynamics.cornering_drag(11.0, 0.0) == 0.0
+
+    def test_near_zero_curvature_returns_zero(self, dynamics):
+        assert dynamics.cornering_drag(11.0, 1e-8) == 0.0
+
+    def test_low_speed_returns_zero(self, dynamics):
+        assert dynamics.cornering_drag(0.3, 0.05) == 0.0
+
+    def test_positive_in_corner(self, dynamics):
+        """Cornering at 40 km/h through kappa=0.02 should produce positive drag."""
+        drag = dynamics.cornering_drag(11.1, 0.02)
+        assert drag > 0.0
+
+    def test_increases_with_curvature(self, dynamics):
+        drag_gentle = dynamics.cornering_drag(11.1, 0.01)
+        drag_tight = dynamics.cornering_drag(11.1, 0.05)
+        assert drag_tight > drag_gentle
+
+    def test_increases_with_speed(self, dynamics):
+        drag_slow = dynamics.cornering_drag(5.0, 0.02)
+        drag_fast = dynamics.cornering_drag(15.0, 0.02)
+        assert drag_fast > drag_slow
+
+    def test_analytical_known_value(self, dynamics):
+        """Hand calculation for analytical fallback.
+
+        mass=278, v=11.1 m/s, kappa=0.02
+        F_lat = 278 * 11.1^2 * 0.02 = 684.8 N
+        C_alpha_total = 278 * 9.81 * 1.5 / 0.15 = 27,271 N/rad
+        drag = 684.8^2 / 27,271 = 17.2 N
+        """
+        drag = dynamics.cornering_drag(11.1, 0.02)
+        assert 10.0 < drag < 30.0
+
+    def test_total_resistance_with_curvature(self, dynamics):
+        """total_resistance with curvature > without."""
+        r_straight = dynamics.total_resistance(11.1, 0.0, 0.0)
+        r_corner = dynamics.total_resistance(11.1, 0.0, 0.05)
+        assert r_corner > r_straight
+
+    def test_total_resistance_backward_compat(self, dynamics):
+        """Calling with 2 args still works (curvature defaults to 0)."""
+        r = dynamics.total_resistance(11.1, 0.0)
+        assert r > 0.0

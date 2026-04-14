@@ -104,12 +104,66 @@ class VehicleDynamics:
         angle = math.atan(grade)
         return self.vehicle.mass_kg * self.GRAVITY_M_S2 * math.sin(angle)
 
-    def total_resistance(self, speed_ms: float, grade: float = 0.0) -> float:
-        """Sum of all resistance forces (N) at given speed and grade."""
+    def cornering_drag(self, speed_ms: float, curvature: float) -> float:
+        """Drag force (N) from tire slip angles during cornering.
+
+        When the car corners, tires operate at slip angles that create a
+        longitudinal drag component. Uses the Pacejka tire model when
+        available, otherwise falls back to a small-angle analytical
+        approximation.
+
+        Args:
+            speed_ms: Vehicle speed (m/s).
+            curvature: Path curvature (1/m). 0 = straight.
+
+        Returns:
+            Cornering drag force (N), always >= 0.
+        """
+        if abs(curvature) < 1e-6 or speed_ms < 0.5:
+            return 0.0
+
+        # Total lateral force needed for the turn
+        f_lat_total = self.vehicle.mass_kg * speed_ms ** 2 * abs(curvature)
+
+        if (
+            self.tire_model is not None
+            and self.load_transfer is not None
+        ):
+            return self._cornering_drag_pacejka(speed_ms, curvature, f_lat_total)
+
+        return self._cornering_drag_analytical(f_lat_total)
+
+    def _cornering_drag_analytical(self, f_lat_total: float) -> float:
+        """Analytical cornering drag using small-angle approximation.
+
+        Assumes linear tire: Fy = C_alpha * alpha, so alpha = Fy/C_alpha,
+        and drag = Fy * sin(alpha) ~ Fy * alpha = Fy^2 / C_alpha.
+
+        C_alpha estimated from peak grip (mu=1.5) and typical FSAE peak
+        slip angle (~0.15 rad).
+        """
+        mu_peak = 1.5
+        alpha_peak = 0.15  # rad, typical FSAE tire
+        c_alpha_total = (
+            self.vehicle.mass_kg * self.GRAVITY_M_S2 * mu_peak / alpha_peak
+        )
+        return f_lat_total ** 2 / c_alpha_total
+
+    def _cornering_drag_pacejka(
+        self, speed_ms: float, curvature: float, f_lat_total: float,
+    ) -> float:
+        """Pacejka-based cornering drag — stub, implemented later."""
+        return self._cornering_drag_analytical(f_lat_total)
+
+    def total_resistance(
+        self, speed_ms: float, grade: float = 0.0, curvature: float = 0.0,
+    ) -> float:
+        """Sum of all resistance forces (N) at given speed, grade, and curvature."""
         return (
             self.drag_force(speed_ms)
             + self.rolling_resistance_force(speed_ms)
             + self.grade_force(grade)
+            + self.cornering_drag(speed_ms, curvature)
         )
 
     # ------------------------------------------------------------------

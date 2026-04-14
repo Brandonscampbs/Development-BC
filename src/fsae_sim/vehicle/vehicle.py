@@ -17,6 +17,30 @@ class VehicleParams:
     drag_coefficient: float
     rolling_resistance: float
     wheelbase_m: float
+    downforce_coefficient: float = 0.0  # Cl * A (m²), 0 = no downforce
+
+
+@dataclass(frozen=True)
+class TireConfig:
+    """Tire model configuration."""
+
+    tir_file: str
+    static_camber_front_deg: float
+    static_camber_rear_deg: float
+
+
+@dataclass(frozen=True)
+class SuspensionConfig:
+    """Suspension geometry and compliance parameters (DSS values)."""
+
+    roll_stiffness_front_nm_per_deg: float
+    roll_stiffness_rear_nm_per_deg: float
+    roll_center_height_front_mm: float
+    roll_center_height_rear_mm: float
+    roll_camber_front_deg_per_deg: float
+    roll_camber_rear_deg_per_deg: float
+    front_track_mm: float
+    rear_track_mm: float
 
 
 @dataclass(frozen=True)

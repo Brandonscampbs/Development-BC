@@ -5,8 +5,7 @@ tags: [module, dashboard, visualization]
 
 # Dashboard
 
-> [!warning] Status: Stub (Phase 3)
-> The Dash app skeleton exists with 6 placeholder pages but no content yet.
+> [!success] Status: Functional (3 pages with real data)
 
 **Source:** `dashboard/`
 
@@ -16,29 +15,38 @@ tags: [module, dashboard, visualization]
 
 ```mermaid
 flowchart LR
-    RES["results/<br/>Parquet files"] --> APP["Dash App<br/>Port 3000"]
-    APP --> P1["Overview"]
-    APP --> P2["Strategy Comparison"]
-    APP --> P3["Car Comparison"]
-    APP --> P4["Parameter Sweep"]
-    APP --> P5["Pareto Frontier"]
-    APP --> P6["Lap Detail"]
+    AiM["AiM Telemetry CSV"] --> TL["telemetry_loader.py"]
+    TL --> SR["sim_runner.py"]
+    YAML["ct16ev.yaml"] --> SR
+    VOLTT["Voltt Cell CSV"] --> SR
+    SR --> P1["Overview"]
+    SR --> P2["Validation"]
+    RES["results/"] --> P3["Sweep Results"]
+    TL --> P2
+    SR --> APP["Dash App<br/>Port 3000"]
+    APP --> P1 & P2 & P3
 ```
 
-The dashboard reads pre-computed simulation results (Parquet files in `results/`). It does NOT run simulations directly.
+The dashboard runs a baseline simulation on first load (cached in memory) and displays results. Validation compares sim output against real AiM telemetry.
 
 ---
 
-## Planned Pages
+## Pages
 
-| Page | Purpose | Key Visualizations |
-|------|---------|-------------------|
-| **Overview** | Key metrics summary | Endurance time, energy, SOC, points |
-| **Strategy** | Compare driver strategies | Speed traces, energy curves, lap times |
-| **Cars** | CT-16EV vs CT-17EV | Side-by-side parameter comparison |
-| **Sweep** | Parameter sweep results | Heatmaps, sensitivity plots |
-| **Pareto** | Time vs. energy frontier | Scatter plot with Pareto curve |
-| **Lap Detail** | Segment-by-segment dive | Speed, torque, current vs. distance |
+| Page | Path | Purpose | Data Source |
+|------|------|---------|-------------|
+| **Simulation Overview** | `/` | Sim results + FSAE scoring | Baseline sim (ReplayStrategy, 22 laps) |
+| **Validation** | `/validation` | Sim vs telemetry comparison | Sim result + AiM CSV |
+| **Sweep Results** | `/sweeps` | Parameter sweep visualization | `results/` directory (Phase 3) |
+
+---
+
+## Data Layer
+
+| Module | Purpose |
+|--------|---------|
+| `dashboard/data/telemetry_loader.py` | Loads and caches AiM CSV, detects laps |
+| `dashboard/data/sim_runner.py` | Runs baseline sim, computes scoring and validation |
 
 ---
 
@@ -52,6 +60,6 @@ docker-compose up
 python -m dashboard
 ```
 
-Runs on **port 3000** with Dash debug mode enabled.
+Runs on **port 3000** with Dash debug mode enabled. First load takes ~2s to run the baseline simulation.
 
 See also: [[Getting Started]], [[Roadmap]]

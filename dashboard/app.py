@@ -20,12 +20,9 @@ sidebar = html.Div(
         html.P("CT-16EV / CT-17EV", className="text-muted small"),
         dbc.Nav(
             [
-                dbc.NavLink("Overview", href="/", active="exact"),
-                dbc.NavLink("Strategy Comparison", href="/strategy", active="exact"),
-                dbc.NavLink("Car Comparison", href="/cars", active="exact"),
-                dbc.NavLink("Parameter Sweep", href="/sweep", active="exact"),
-                dbc.NavLink("Pareto Frontier", href="/pareto", active="exact"),
-                dbc.NavLink("Lap Detail", href="/lap-detail", active="exact"),
+                dbc.NavLink("Simulation", href="/", active="exact"),
+                dbc.NavLink("Validation", href="/validation", active="exact"),
+                dbc.NavLink("Sweep Results", href="/sweeps", active="exact"),
             ],
             vertical=True,
             pills=True,

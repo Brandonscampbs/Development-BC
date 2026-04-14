@@ -469,3 +469,51 @@ class TestIntegration:
             assert math.isfinite(fy), f"NaN at camber={camber}"
             fx = tire_10psi.longitudinal_force(0.1, 657.0, camber_rad=camber)
             assert math.isfinite(fx), f"NaN at camber={camber}"
+
+
+# ======================================================================
+# Grip scale tests
+# ======================================================================
+
+
+class TestGripScale:
+    """Verify grip scaling reduces peak force while preserving stiffness."""
+
+    def test_apply_grip_scale_reduces_peak_lateral(self, tire_10psi: PacejkaTireModel) -> None:
+        fz = 657.0  # nominal load
+        peak_before = tire_10psi.peak_lateral_force(fz)
+        tire_10psi.apply_grip_scale(0.5)
+        peak_after = tire_10psi.peak_lateral_force(fz)
+        assert peak_after == pytest.approx(peak_before * 0.5, rel=0.05)
+
+    def test_apply_grip_scale_reduces_peak_longitudinal(self, tire_10psi: PacejkaTireModel) -> None:
+        fz = 657.0
+        peak_before = tire_10psi.peak_longitudinal_force(fz)
+        tire_10psi.apply_grip_scale(0.5)
+        peak_after = tire_10psi.peak_longitudinal_force(fz)
+        assert peak_after == pytest.approx(peak_before * 0.5, rel=0.05)
+
+    def test_apply_grip_scale_preserves_cornering_stiffness(self, tire_10psi: PacejkaTireModel) -> None:
+        """Cornering stiffness Kya = B*C*D should be preserved because B compensates."""
+        fz = 657.0
+        small_alpha = 0.01  # rad, linear region
+        fy_before = tire_10psi.lateral_force(small_alpha, fz)
+        tire_10psi.apply_grip_scale(0.5)
+        fy_after = tire_10psi.lateral_force(small_alpha, fz)
+        assert fy_after == pytest.approx(fy_before, rel=0.10)
+
+    def test_apply_grip_scale_1_is_noop(self, tire_10psi: PacejkaTireModel) -> None:
+        fz = 657.0
+        peak_before = tire_10psi.peak_lateral_force(fz)
+        tire_10psi.apply_grip_scale(1.0)
+        peak_after = tire_10psi.peak_lateral_force(fz)
+        assert peak_after == pytest.approx(peak_before, rel=0.001)
+
+    def test_apply_grip_scale_stacks(self, tire_10psi: PacejkaTireModel) -> None:
+        """Calling twice should multiply scales."""
+        fz = 657.0
+        peak_original = tire_10psi.peak_lateral_force(fz)
+        tire_10psi.apply_grip_scale(0.5)
+        tire_10psi.apply_grip_scale(0.5)
+        peak_after = tire_10psi.peak_lateral_force(fz)
+        assert peak_after == pytest.approx(peak_original * 0.25, rel=0.05)

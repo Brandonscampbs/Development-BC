@@ -153,6 +153,20 @@ class PacejkaTireModel:
         """Look up a scaling factor (defaults to 1.0)."""
         return self.scaling.get(key, default)
 
+    def apply_grip_scale(self, scale: float) -> None:
+        """Scale tire grip by multiplying LMUY and LMUX scaling factors.
+
+        This is the standard Pacejka mechanism for calibrating TTC rig data
+        to on-car grip. Scales peak force (D = mu * Fz) while preserving
+        cornering stiffness (B compensates since B = Kya / (C * D)).
+
+        Args:
+            scale: Grip multiplier. 1.0 = no change, 0.5 = halve peak grip.
+                Values should be positive.
+        """
+        self.scaling["LMUY"] = self.scaling.get("LMUY", 1.0) * scale
+        self.scaling["LMUX"] = self.scaling.get("LMUX", 1.0) * scale
+
     # ------------------------------------------------------------------
     # Lateral force (Fy) -- PAC2002 pure side slip
     # ------------------------------------------------------------------

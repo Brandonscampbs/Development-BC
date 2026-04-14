@@ -194,6 +194,51 @@ class TestCT16EVTireSuspensionLoading:
         assert config.suspension.front_track_mm == 1194.0
 
 
+class TestTireConfigGripScale:
+    def test_grip_scale_default(self):
+        tc = TireConfig(
+            tir_file="path/to/file.tir",
+            static_camber_front_deg=-1.25,
+            static_camber_rear_deg=-1.25,
+        )
+        assert tc.grip_scale == 1.0
+
+    def test_grip_scale_explicit(self):
+        tc = TireConfig(
+            tir_file="path/to/file.tir",
+            static_camber_front_deg=-1.25,
+            static_camber_rear_deg=-1.25,
+            grip_scale=0.46,
+        )
+        assert tc.grip_scale == 0.46
+
+    def test_grip_scale_from_yaml(self, tmp_path):
+        yaml_content = (
+            "name: test\nyear: 2025\ndescription: test\n"
+            "vehicle:\n  mass_kg: 278.0\n  frontal_area_m2: 1.0\n  drag_coefficient: 1.5\n"
+            "  rolling_resistance: 0.015\n  wheelbase_m: 1.549\n"
+            "powertrain:\n  motor_speed_max_rpm: 2900\n  brake_speed_rpm: 2400\n"
+            "  torque_limit_inverter_nm: 85.0\n  torque_limit_lvcu_nm: 150.0\n"
+            "  iq_limit_a: 170.0\n  id_limit_a: 30.0\n  gear_ratio: 3.818\n"
+            "  drivetrain_efficiency: 0.92\n"
+            "battery:\n  cell_type: P45B\n  topology: {series: 110, parallel: 4}\n"
+            "  cell_voltage_min_v: 2.55\n  cell_voltage_max_v: 4.20\n  discharged_soc_pct: 2.0\n"
+            "  soc_taper: {threshold_pct: 85.0, rate_a_per_pct: 1.0}\n"
+            "  discharge_limits:\n    - {temp_c: 30.0, max_current_a: 100.0}\n"
+            "    - {temp_c: 65.0, max_current_a: 0.0}\n"
+            "tire:\n  tir_file: path/to/tire.tir\n  static_camber_front_deg: -1.5\n"
+            "  static_camber_rear_deg: -2.0\n  grip_scale: 0.46\n"
+            "suspension:\n  roll_stiffness_front_nm_per_deg: 238.0\n"
+            "  roll_stiffness_rear_nm_per_deg: 258.0\n  roll_center_height_front_mm: 88.9\n"
+            "  roll_center_height_rear_mm: 63.5\n  roll_camber_front_deg_per_deg: -0.5\n"
+            "  roll_camber_rear_deg_per_deg: -0.554\n  front_track_mm: 1194.0\n"
+            "  rear_track_mm: 1168.0\n"
+        )
+        (tmp_path / "cfg.yaml").write_text(yaml_content)
+        config = VehicleConfig.from_yaml(tmp_path / "cfg.yaml")
+        assert config.tire.grip_scale == 0.46
+
+
 class TestInitExports:
     def test_tire_config_importable(self):
         from fsae_sim.vehicle import TireConfig

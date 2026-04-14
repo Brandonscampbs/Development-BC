@@ -13,3 +13,4 @@ results/*
 .env
 .coverage
 htmlcov/
+.worktrees/

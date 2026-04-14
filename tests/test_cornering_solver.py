@@ -27,6 +27,7 @@ def make_linear_tire(mu: float = 1.3) -> MagicMock:
     """
     tire = MagicMock()
     tire.peak_lateral_force.side_effect = lambda fz, camber=0.0: mu * fz
+    tire.peak_longitudinal_force.side_effect = lambda fz, camber=0.0: mu * fz
     return tire
 
 
@@ -563,3 +564,89 @@ class TestClassConstants:
 
     def test_curvature_threshold(self) -> None:
         assert CorneringSolver._CURVATURE_THRESHOLD == 1e-6
+
+
+# ---------------------------------------------------------------------------
+# 11. Combined slip: friction-ellipse reduction
+# ---------------------------------------------------------------------------
+
+
+class TestCombinedSlip:
+    """Tests for longitudinal_g parameter reducing lateral capacity."""
+
+    def test_zero_longitudinal_g_matches_baseline(self) -> None:
+        """longitudinal_g=0.0 must produce identical result to omitting it."""
+        solver = make_solver(mu=1.3)
+        curvature = 0.05
+        v_default = solver.max_cornering_speed(curvature)
+        v_zero = solver.max_cornering_speed(curvature, longitudinal_g=0.0)
+        assert v_zero == pytest.approx(v_default, abs=1e-6)
+
+    def test_positive_longitudinal_g_reduces_speed(self) -> None:
+        """Accelerating mid-corner should reduce max cornering speed."""
+        solver = make_solver(mu=1.3)
+        curvature = 0.05
+        v_pure = solver.max_cornering_speed(curvature)
+        v_accel = solver.max_cornering_speed(curvature, longitudinal_g=0.3)
+        assert v_accel < v_pure
+
+    def test_negative_longitudinal_g_reduces_speed(self) -> None:
+        """Braking mid-corner should reduce max cornering speed."""
+        solver = make_solver(mu=1.3)
+        curvature = 0.05
+        v_pure = solver.max_cornering_speed(curvature)
+        v_brake = solver.max_cornering_speed(curvature, longitudinal_g=-0.5)
+        assert v_brake < v_pure
+
+    def test_higher_longitudinal_g_lower_speed(self) -> None:
+        """Monotonic: more longitudinal demand -> lower corner speed."""
+        solver = make_solver(mu=1.3)
+        curvature = 0.05
+        v_low = solver.max_cornering_speed(curvature, longitudinal_g=0.2)
+        v_high = solver.max_cornering_speed(curvature, longitudinal_g=0.5)
+        assert v_high < v_low
+
+    def test_small_longitudinal_g_below_threshold_ignored(self) -> None:
+        """Very small longitudinal_g (< 0.01) is treated as zero."""
+        solver = make_solver(mu=1.3)
+        curvature = 0.05
+        v_pure = solver.max_cornering_speed(curvature)
+        v_tiny = solver.max_cornering_speed(curvature, longitudinal_g=0.005)
+        assert v_tiny == pytest.approx(v_pure, abs=1e-6)
+
+    def test_accel_uses_rear_tires_only(self) -> None:
+        """Under acceleration, only rear tires should lose lateral capacity."""
+        mu = 1.3
+        mass_kg = 278.0
+
+        def tire_loads_rear_heavy(speed, lat_g, lon_g):
+            w = mass_kg * 9.81
+            return (w * 0.15, w * 0.15, w * 0.35, w * 0.35)
+
+        lt = MagicMock()
+        lt.tire_loads.side_effect = tire_loads_rear_heavy
+        lt.roll_stiffness_front = 1e6
+        lt.roll_stiffness_rear = 1e6
+
+        tire = MagicMock()
+        tire.peak_lateral_force.side_effect = lambda fz, camber=0.0: mu * fz
+        tire.peak_longitudinal_force.side_effect = lambda fz, camber=0.0: mu * fz
+
+        solver = CorneringSolver(
+            tire_model=tire, load_transfer=lt, mass_kg=mass_kg,
+            static_camber_front_rad=0.0, static_camber_rear_rad=0.0,
+            roll_camber_front=0.0, roll_camber_rear=0.0,
+        )
+        curvature = 0.05
+        v_pure = solver.max_cornering_speed(curvature)
+        v_accel = solver.max_cornering_speed(curvature, longitudinal_g=0.3)
+        assert v_accel < v_pure
+        assert v_accel > 0.5
+
+    def test_sign_invariance_of_curvature_with_longitudinal_g(self) -> None:
+        """Combined slip should not break curvature sign invariance."""
+        solver = make_solver(mu=1.3)
+        curvature = 0.05
+        v_pos = solver.max_cornering_speed(curvature, longitudinal_g=0.3)
+        v_neg = solver.max_cornering_speed(-curvature, longitudinal_g=0.3)
+        assert v_pos == pytest.approx(v_neg, abs=1e-6)

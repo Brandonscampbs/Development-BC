@@ -9,6 +9,8 @@ vehicle:
   rolling_resistance: 0.015
   wheelbase_m: 1.549  # DSS: 1549 mm
   downforce_coefficient: 2.18  # DSS: ClA=2.18 m² (625N at 80 kph)
+  rotor_inertia_kg_m2: 0.06   # EMRAX 228 datasheet
+  wheel_inertia_kg_m2: 0.3    # per wheel estimate (10" Hoosier + aluminum rim)
 
 powertrain:
   motor_speed_max_rpm: 2900  # Inverter setting (EMRAX 228 capable of 6500)

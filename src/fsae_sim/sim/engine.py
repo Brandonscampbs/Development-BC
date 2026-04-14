@@ -20,6 +20,7 @@ from fsae_sim.vehicle import VehicleConfig
 from fsae_sim.vehicle.battery_model import BatteryModel
 from fsae_sim.vehicle.dynamics import VehicleDynamics
 from fsae_sim.vehicle.powertrain_model import PowertrainModel
+from fsae_sim.sim.speed_envelope import SpeedEnvelope
 
 try:
     from fsae_sim.vehicle.tire_model import PacejkaTireModel
@@ -84,9 +85,14 @@ class SimulationEngine:
             )
             self.dynamics = VehicleDynamics(
                 vehicle.vehicle, tire_model, load_transfer, cornering_solver,
+                powertrain_config=vehicle.powertrain,
             )
         else:
-            self.dynamics = VehicleDynamics(vehicle.vehicle)
+            self.dynamics = VehicleDynamics(
+                vehicle.vehicle, powertrain_config=vehicle.powertrain,
+            )
+
+        self._envelope = SpeedEnvelope(self.dynamics, self.powertrain, self.track)
 
     def run(
         self,
@@ -125,6 +131,13 @@ class SimulationEngine:
         records: list[dict] = []
         laps_completed = 0
 
+        # Pre-compute speed envelope for synthetic strategies
+        is_replay = isinstance(self.strategy, ReplayStrategy)
+        if not is_replay:
+            v_max = self._envelope.compute(initial_speed=speed)
+        else:
+            v_max = None
+
         for lap in range(num_laps):
             for seg_idx, segment in enumerate(segments):
                 # Build SimState for driver strategy
@@ -149,9 +162,6 @@ class SimulationEngine:
 
                 # 1. Driver decision
                 cmd = self.strategy.decide(sim_state, upcoming)
-
-                # Check if this is a replay strategy with recorded speed
-                is_replay = isinstance(self.strategy, ReplayStrategy)
 
                 if is_replay:
                     # --- Speed-constrained replay mode ---
@@ -179,10 +189,8 @@ class SimulationEngine:
                     # --- Force-based resolution mode ---
                     # Used for synthetic strategies (coast, threshold braking, etc.)
 
-                    # 2. Corner speed limit for this segment
-                    corner_limit = self.dynamics.max_cornering_speed(
-                        segment.curvature, segment.grip_factor,
-                    )
+                    # 2. Speed limit from pre-computed envelope
+                    corner_limit = float(v_max[seg_idx])
 
                     # 3. Compute forces based on driver action
                     if cmd.action == ControlAction.THROTTLE:

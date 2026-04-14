@@ -18,6 +18,8 @@ class VehicleParams:
     rolling_resistance: float
     wheelbase_m: float
     downforce_coefficient: float = 0.0  # Cl * A (m²), 0 = no downforce
+    rotor_inertia_kg_m2: float = 0.06  # EMRAX 228 default
+    wheel_inertia_kg_m2: float = 0.3   # per wheel (10" Hoosier + aluminum rim)
 
 
 @dataclass(frozen=True)

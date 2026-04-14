@@ -68,6 +68,7 @@ class CorneringSolver:
         self,
         curvature: float,
         mu_scale: float = 1.0,
+        longitudinal_g: float = 0.0,
     ) -> float:
         """Find the maximum speed sustainable through a corner.
 
@@ -80,6 +81,11 @@ class CorneringSolver:
                 Only the magnitude matters; sign is ignored.
             mu_scale: Friction scaling factor.  1.0 = nominal grip,
                 < 1.0 = reduced grip (e.g. wet), > 1.0 = extra grip.
+            longitudinal_g: Simultaneous longitudinal acceleration in g-units.
+                Positive = accelerating, negative = braking.  Values with
+                ``|longitudinal_g| < 0.01`` are treated as zero (pure
+                cornering).  Non-zero values invoke the friction-ellipse
+                model, reducing available lateral capacity.
 
         Returns:
             Maximum sustainable speed in m/s.  ``math.inf`` for straights.
@@ -94,7 +100,7 @@ class CorneringSolver:
 
         for _ in range(self._ITERATIONS):
             v_mid = (v_low + v_high) / 2.0
-            if self._can_sustain(v_mid, abs_curvature, mu_scale):
+            if self._can_sustain(v_mid, abs_curvature, mu_scale, longitudinal_g):
                 v_low = v_mid
             else:
                 v_high = v_mid
@@ -106,6 +112,7 @@ class CorneringSolver:
         speed: float,
         curvature: float,
         mu_scale: float,
+        longitudinal_g: float = 0.0,
     ) -> bool:
         """Check whether the vehicle can sustain cornering at the given speed.
 
@@ -114,10 +121,19 @@ class CorneringSolver:
         and roll-induced camber changes, then sums peak lateral force
         from all four tires (scaled by ``mu_scale``).
 
+        When ``longitudinal_g`` is non-zero (above the 0.01 g threshold),
+        the friction-ellipse model is applied: longitudinal force demand is
+        distributed across the appropriate tires (rear only for acceleration,
+        proportional to normal load for braking), and each tire's available
+        lateral capacity is reduced by ``sqrt(1 - (Fx/Fx_peak)^2)``.
+
         Args:
             speed: Vehicle speed in m/s.
             curvature: Absolute path curvature in 1/m.
             mu_scale: Friction scaling factor.
+            longitudinal_g: Simultaneous longitudinal acceleration in g-units.
+                Positive = accelerating (rear tires), negative = braking
+                (all tires, proportional to load).
 
         Returns:
             True if total tire lateral capacity >= required centripetal force.
@@ -155,13 +171,41 @@ class CorneringSolver:
         camber_rl = self._static_camber_rear_rad + camber_change_rear    # outside
         camber_rr = self._static_camber_rear_rad - camber_change_rear    # inside
 
-        # Sum peak lateral force from all four tires
-        total_capacity = (
-            self._tire.peak_lateral_force(fl, camber_fl) * mu_scale
-            + self._tire.peak_lateral_force(fr, camber_fr) * mu_scale
-            + self._tire.peak_lateral_force(rl, camber_rl) * mu_scale
-            + self._tire.peak_lateral_force(rr, camber_rr) * mu_scale
-        )
+        # Sum lateral capacity from all four tires
+        loads = [fl, fr, rl, rr]
+        cambers = [camber_fl, camber_fr, camber_rl, camber_rr]
+
+        if abs(longitudinal_g) > 0.01:
+            # Distribute longitudinal demand to tires
+            f_x_total = self._mass_kg * abs(longitudinal_g) * self.GRAVITY
+
+            if longitudinal_g > 0:
+                # Traction: rear tires only
+                fx_per_tire = [0.0, 0.0, f_x_total / 2.0, f_x_total / 2.0]
+            else:
+                # Braking: proportional to normal load
+                total_fz = sum(loads)
+                if total_fz > 0:
+                    fx_per_tire = [f_x_total * (fz / total_fz) for fz in loads]
+                else:
+                    fx_per_tire = [0.0, 0.0, 0.0, 0.0]
+
+            total_capacity = 0.0
+            for fz, camber, fx in zip(loads, cambers, fx_per_tire):
+                fx_peak = self._tire.peak_longitudinal_force(fz, camber)
+                if fx_peak > 0:
+                    fx_ratio = min(abs(fx) / fx_peak, 0.99)
+                else:
+                    fx_ratio = 0.99
+                fy_peak = self._tire.peak_lateral_force(fz, camber)
+                fy_available = fy_peak * math.sqrt(1.0 - fx_ratio * fx_ratio)
+                total_capacity += fy_available * mu_scale
+        else:
+            # Pure cornering (no longitudinal demand)
+            total_capacity = sum(
+                self._tire.peak_lateral_force(fz, cam) * mu_scale
+                for fz, cam in zip(loads, cambers)
+            )
 
         # Required centripetal force (inertial only, not including downforce)
         required_force = self._mass_kg * a_lat

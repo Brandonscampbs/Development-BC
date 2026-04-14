@@ -8,6 +8,8 @@ vehicle:
   drag_coefficient: 1.502  # CdA=1.502 from DSS (431N drag at 80 kph)
   rolling_resistance: 0.015
   wheelbase_m: 1.549
+  rotor_inertia_kg_m2: 0.06   # EMRAX 228 datasheet (same motor)
+  wheel_inertia_kg_m2: 0.3    # per wheel estimate
 
 powertrain:
   motor_speed_max_rpm: 2900

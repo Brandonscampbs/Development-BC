@@ -15,7 +15,7 @@ class TestVehicleConfigLoading:
 
     def test_vehicle_params(self, ct16ev_config_path):
         config = VehicleConfig.from_yaml(ct16ev_config_path)
-        assert config.vehicle.mass_kg == 278.0  # DSS: 210 car + 68 driver
+        assert config.vehicle.mass_kg == 288.0  # DSS: 220 car + 68 driver
         assert config.vehicle.drag_coefficient == 1.502  # DSS: CdA from drag data
         assert config.vehicle.rolling_resistance == 0.015
 
@@ -24,7 +24,7 @@ class TestVehicleConfigLoading:
         assert config.powertrain.motor_speed_max_rpm == 2900
         assert config.powertrain.torque_limit_inverter_nm == 85.0
         assert config.powertrain.iq_limit_a == 170.0
-        assert config.powertrain.gear_ratio == 3.818  # DSS: final drive ratio
+        assert config.powertrain.gear_ratio == 3.6363  # DSS: 40/11 final drive ratio
 
     def test_battery_params(self, ct16ev_config_path):
         config = VehicleConfig.from_yaml(ct16ev_config_path)
@@ -52,7 +52,7 @@ class TestVehicleConfigLoading:
         config = VehicleConfig.from_yaml(ct17ev_config_path)
         assert config.name == "CT-17EV"
         assert config.year == 2026
-        assert config.vehicle.mass_kg == 261.0
+        assert config.vehicle.mass_kg == 279.0
         assert config.battery.cell_type == "P50B"
         assert config.battery.series == 100
 

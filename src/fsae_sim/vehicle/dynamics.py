@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from fsae_sim.vehicle.cornering_solver import CorneringSolver
     from fsae_sim.vehicle.load_transfer import LoadTransferModel
     from fsae_sim.vehicle.tire_model import PacejkaTireModel
+    from fsae_sim.vehicle.powertrain import PowertrainConfig
 
 
 class VehicleDynamics:
@@ -38,14 +39,28 @@ class VehicleDynamics:
     def __init__(
         self,
         vehicle: VehicleParams,
-        tire_model: PacejkaTireModel | None = None,
-        load_transfer: LoadTransferModel | None = None,
-        cornering_solver: CorneringSolver | None = None,
+        tire_model: "PacejkaTireModel | None" = None,
+        load_transfer: "LoadTransferModel | None" = None,
+        cornering_solver: "CorneringSolver | None" = None,
+        powertrain_config: "PowertrainConfig | None" = None,
     ) -> None:
         self.vehicle = vehicle
         self.tire_model = tire_model
         self.load_transfer = load_transfer
         self.cornering_solver = cornering_solver
+
+        # Effective mass: bare mass + rotational inertia of spinning components
+        if powertrain_config is not None:
+            tire_radius = 0.228  # m, 10-inch FSAE wheel
+            G = powertrain_config.gear_ratio
+            eta = powertrain_config.drivetrain_efficiency
+            j_eff = (
+                vehicle.rotor_inertia_kg_m2 * G * G * eta
+                + 4 * vehicle.wheel_inertia_kg_m2
+            )
+            self.m_effective: float = vehicle.mass_kg + j_eff / (tire_radius * tire_radius)
+        else:
+            self.m_effective = vehicle.mass_kg
 
     # ------------------------------------------------------------------
     # Resistance forces  (all return positive magnitudes)
@@ -194,9 +209,12 @@ class VehicleDynamics:
     ) -> float:
         """Longitudinal acceleration (m/s^2) from net force.
 
+        Uses ``m_effective`` which includes rotational inertia of motor,
+        gears, and wheels when a powertrain config is provided.
+
         ``net_force_n`` is drive_force - total_resistance (positive = accelerating).
         """
-        return net_force_n / self.vehicle.mass_kg
+        return net_force_n / self.m_effective
 
     def resolve_exit_speed(
         self,

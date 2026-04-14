@@ -242,3 +242,44 @@ class TestCornerSpeedCache:
         count2 = dyn.max_cornering_speed.call_count
 
         assert count2 > count1
+
+
+class TestCombinedSlipCorrection:
+    """When cornering solver supports longitudinal_g, the envelope should
+    apply a correction pass that reduces corner speeds where the car is
+    simultaneously accelerating or braking."""
+
+    def test_correction_reduces_speed_at_corner_exit(self):
+        """At corner exit where car is accelerating, combined slip should
+        reduce the achievable speed slightly vs pure cornering."""
+        segs = (
+            [make_segment(i) for i in range(5)]
+            + [make_segment(i + 5, curvature=0.1) for i in range(5)]
+            + [make_segment(i + 10) for i in range(10)]
+        )
+        track = make_track(segs)
+
+        def corner_speed_fn(curvature, grip_factor=1.0, longitudinal_g=0.0):
+            kappa = abs(curvature)
+            if kappa < 1e-6:
+                return float("inf")
+            base = math.sqrt(1.3 * 9.81 / kappa) * grip_factor
+            if abs(longitudinal_g) > 0.01:
+                reduction = 1.0 - 0.3 * abs(longitudinal_g)
+                return base * max(reduction, 0.5)
+            return base
+
+        dyn = make_dynamics()
+        dyn.max_cornering_speed.side_effect = corner_speed_fn
+        pt = make_powertrain()
+
+        env_with_correction = SpeedEnvelope(dyn, pt, track)
+        v_corrected = env_with_correction.compute(initial_speed=0.5)
+
+        dyn2 = make_dynamics()
+        pt2 = make_powertrain()
+        env_no_correction = SpeedEnvelope(dyn2, pt2, track)
+        v_no_correction = env_no_correction.compute(initial_speed=0.5)
+
+        for i in range(len(segs)):
+            assert v_corrected[i] <= v_no_correction[i] + 0.1

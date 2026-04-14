@@ -9,6 +9,8 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
+from scipy.optimize import brentq, minimize_scalar
+
 from fsae_sim.vehicle.vehicle import VehicleParams
 
 if TYPE_CHECKING:
@@ -149,11 +151,84 @@ class VehicleDynamics:
         )
         return f_lat_total ** 2 / c_alpha_total
 
+    def _find_slip_angle(
+        self, f_lat_needed: float, normal_load: float,
+    ) -> float:
+        """Find slip angle (rad) that produces the needed lateral force.
+
+        Uses brentq root-finding on the Pacejka lateral_force function,
+        which is monotonic below peak slip angle. If demanded force
+        exceeds the tire's peak, returns the peak slip angle (tire
+        saturated).
+
+        Args:
+            f_lat_needed: Required lateral force magnitude (N).
+            normal_load: Tire normal load (N).
+
+        Returns:
+            Slip angle in radians (always >= 0).
+        """
+        if normal_load < 1.0 or f_lat_needed < 1.0:
+            return 0.0
+
+        peak_fy = self.tire_model.peak_lateral_force(normal_load)
+        if f_lat_needed >= peak_fy:
+            # Tire is saturated — find the slip angle at peak Fy
+            result = minimize_scalar(
+                lambda a: -abs(
+                    self.tire_model.lateral_force(a, normal_load)
+                ),
+                bounds=(0.001, math.pi / 4.0),
+                method="bounded",
+            )
+            return abs(result.x)
+
+        # Fy is monotonic below peak — brentq finds the unique root
+        return brentq(
+            lambda a: abs(
+                self.tire_model.lateral_force(a, normal_load)
+            ) - f_lat_needed,
+            0.0,
+            math.pi / 4.0,
+            xtol=1e-4,
+        )
+
     def _cornering_drag_pacejka(
         self, speed_ms: float, curvature: float, f_lat_total: float,
     ) -> float:
-        """Pacejka-based cornering drag — stub, implemented later."""
-        return self._cornering_drag_analytical(f_lat_total)
+        """Cornering drag using Pacejka tire model with load transfer.
+
+        Computes per-tire slip angles from lateral force demand distributed
+        by normal load, then sums the drag component (Fy * sin(alpha))
+        across all four tires.
+        """
+        # Lateral acceleration for load transfer
+        a_lat_g = speed_ms ** 2 * abs(curvature) / self.GRAVITY_M_S2
+
+        # Per-tire normal loads under cornering
+        fl, fr, rl, rr = self.load_transfer.tire_loads(
+            speed_ms, a_lat_g, 0.0,
+        )
+        loads = [fl, fr, rl, rr]
+        total_load = sum(loads)
+        if total_load < 1.0:
+            return 0.0
+
+        total_drag = 0.0
+        for fz in loads:
+            if fz < 1.0:
+                continue
+            # This tire's share of lateral force, proportional to load
+            f_lat_tire = f_lat_total * (fz / total_load)
+            # Find slip angle that produces this lateral force
+            alpha = self._find_slip_angle(f_lat_tire, fz)
+            # Drag component: lateral force projected onto velocity direction
+            fy_actual = abs(
+                self.tire_model.lateral_force(alpha, fz)
+            )
+            total_drag += fy_actual * math.sin(alpha)
+
+        return total_drag
 
     def total_resistance(
         self, speed_ms: float, grade: float = 0.0, curvature: float = 0.0,

@@ -353,3 +353,77 @@ class TestCorneringDrag:
         """Calling with 2 args still works (curvature defaults to 0)."""
         r = dynamics.total_resistance(11.1, 0.0)
         assert r > 0.0
+
+
+class TestCorneringDragPacejka:
+    """Test cornering_drag() with Pacejka tire model (mocked)."""
+
+    @pytest.fixture
+    def mock_tire(self):
+        """Mock tire model with simple linear response.
+
+        lateral_force(alpha, Fz) = -Fz * 15.0 * alpha  (negative per Pacejka convention)
+        peak_lateral_force(Fz) = Fz * 1.5  (mu = 1.5)
+        """
+        tire = MagicMock()
+        tire.lateral_force.side_effect = (
+            lambda alpha, fz, camber=0.0: -fz * 15.0 * alpha
+        )
+        tire.peak_lateral_force.side_effect = (
+            lambda fz, camber=0.0: fz * 1.5
+        )
+        return tire
+
+    @pytest.fixture
+    def mock_lt(self, ct16ev_params):
+        """Mock load transfer that returns equal loads."""
+        lt = MagicMock()
+        total_weight = ct16ev_params.mass_kg * 9.81
+        per_tire = total_weight / 4.0
+        lt.tire_loads.return_value = (per_tire, per_tire, per_tire, per_tire)
+        return lt
+
+    @pytest.fixture
+    def dynamics_pacejka(self, ct16ev_params, mock_tire, mock_lt):
+        return VehicleDynamics(
+            ct16ev_params, tire_model=mock_tire, load_transfer=mock_lt,
+        )
+
+    def test_positive_drag_in_corner(self, dynamics_pacejka):
+        drag = dynamics_pacejka.cornering_drag(11.1, 0.02)
+        assert drag > 0.0
+
+    def test_zero_on_straight(self, dynamics_pacejka):
+        assert dynamics_pacejka.cornering_drag(11.1, 0.0) == 0.0
+
+    def test_increases_with_curvature(self, dynamics_pacejka):
+        drag_gentle = dynamics_pacejka.cornering_drag(11.1, 0.01)
+        drag_tight = dynamics_pacejka.cornering_drag(11.1, 0.05)
+        assert drag_tight > drag_gentle
+
+    def test_calls_load_transfer(self, dynamics_pacejka, mock_lt):
+        dynamics_pacejka.cornering_drag(11.1, 0.02)
+        mock_lt.tire_loads.assert_called_once()
+        # Should pass lateral g, not longitudinal
+        args = mock_lt.tire_loads.call_args
+        speed_arg = args[0][0]
+        lat_g_arg = args[0][1]
+        long_g_arg = args[0][2]
+        assert abs(speed_arg - 11.1) < 0.01
+        assert lat_g_arg > 0  # positive lateral g
+        assert long_g_arg == 0.0  # no longitudinal accel during steady cornering
+
+    def test_saturated_tire_no_crash(self, ct16ev_params):
+        """When demanded Fy exceeds peak, should not crash or return NaN."""
+        tire = MagicMock()
+        # Very weak tire: peak at 100 N, but we demand much more
+        tire.lateral_force.side_effect = (
+            lambda alpha, fz, camber=0.0: -min(100.0, fz * 5.0 * alpha)
+        )
+        tire.peak_lateral_force.side_effect = lambda fz, camber=0.0: 100.0
+        lt = MagicMock()
+        lt.tire_loads.return_value = (200, 200, 200, 200)
+        dyn = VehicleDynamics(ct16ev_params, tire_model=tire, load_transfer=lt)
+        drag = dyn.cornering_drag(15.0, 0.10)  # high speed, tight corner
+        assert drag > 0.0
+        assert math.isfinite(drag)

@@ -233,3 +233,73 @@ class TestMaxBrakingForce:
         assert VehicleDynamics(
             ct16ev_params, load_transfer=MagicMock()
         ).max_braking_force(10) == float("inf")
+
+
+# ---------------------------------------------------------------------------
+# Effective rotational inertia tests  (Task: m_effective)
+# ---------------------------------------------------------------------------
+
+from fsae_sim.vehicle.powertrain import PowertrainConfig
+
+
+@pytest.fixture
+def ct16ev_powertrain():
+    """CT-16EV powertrain config."""
+    return PowertrainConfig(
+        motor_speed_max_rpm=2900,
+        brake_speed_rpm=2400,
+        torque_limit_inverter_nm=85.0,
+        torque_limit_lvcu_nm=150.0,
+        iq_limit_a=170.0,
+        id_limit_a=30.0,
+        gear_ratio=3.6363,
+        drivetrain_efficiency=0.92,
+    )
+
+
+@pytest.fixture
+def dynamics_with_inertia(ct16ev_params, ct16ev_powertrain):
+    return VehicleDynamics(ct16ev_params, powertrain_config=ct16ev_powertrain)
+
+
+class TestEffectiveInertia:
+    """Tests for rotational inertia in F=ma calculations."""
+
+    def test_m_effective_greater_than_mass(self, dynamics_with_inertia):
+        """m_effective must be greater than bare mass."""
+        assert dynamics_with_inertia.m_effective > dynamics_with_inertia.vehicle.mass_kg
+
+    def test_m_effective_value(self, ct16ev_params, ct16ev_powertrain):
+        """Verify m_effective calculation for CT-16EV.
+
+        J_eff = 0.06 * 3.6363^2 * 0.92 + 4 * 0.3 = 1.930 kg*m^2
+        m_eff = 278 + 1.930 / 0.228^2 = 278 + 37.14 = 315.14 kg
+        """
+        dyn = VehicleDynamics(ct16ev_params, powertrain_config=ct16ev_powertrain)
+        G = 3.6363
+        eta = 0.92
+        r = 0.228
+        J_eff = 0.06 * G**2 * eta + 4 * 0.3
+        expected = ct16ev_params.mass_kg + J_eff / r**2
+        assert dyn.m_effective == pytest.approx(expected, rel=1e-4)
+
+    def test_acceleration_uses_m_effective(self, dynamics_with_inertia, ct16ev_params):
+        """Acceleration should use m_effective, not bare mass."""
+        a = dynamics_with_inertia.acceleration(1000.0)
+        a_bare = 1000.0 / ct16ev_params.mass_kg
+        a_effective = 1000.0 / dynamics_with_inertia.m_effective
+        assert a == pytest.approx(a_effective, rel=1e-6)
+        assert a < a_bare  # slower with rotational inertia
+
+    def test_no_powertrain_config_falls_back(self, ct16ev_params):
+        """Without powertrain config, m_effective == mass_kg (backward compat)."""
+        dyn = VehicleDynamics(ct16ev_params)
+        assert dyn.m_effective == ct16ev_params.mass_kg
+
+    def test_cornering_speed_unaffected(self, dynamics_with_inertia):
+        """Cornering speed should NOT use m_effective (lateral, not longitudinal)."""
+        dyn_no_inertia = VehicleDynamics(dynamics_with_inertia.vehicle)
+        kappa = 0.05
+        v_with = dynamics_with_inertia.max_cornering_speed(kappa)
+        v_without = dyn_no_inertia.max_cornering_speed(kappa)
+        assert v_with == pytest.approx(v_without, abs=0.01)

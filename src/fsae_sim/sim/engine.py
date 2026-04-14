@@ -84,9 +84,12 @@ class SimulationEngine:
             )
             self.dynamics = VehicleDynamics(
                 vehicle.vehicle, tire_model, load_transfer, cornering_solver,
+                powertrain_config=vehicle.powertrain,
             )
         else:
-            self.dynamics = VehicleDynamics(vehicle.vehicle)
+            self.dynamics = VehicleDynamics(
+                vehicle.vehicle, powertrain_config=vehicle.powertrain,
+            )
 
     def run(
         self,

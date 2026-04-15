@@ -12,7 +12,11 @@
       "Bash(xargs -I {} head -10 {})",
       "Bash(python -c ':*)",
       "Bash(pip install:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(git log:*)",
+      "Bash(git cherry:*)",
+      "Bash(git fsck:*)",
+      "Bash(git cherry-pick:*)"
     ]
   }
 }

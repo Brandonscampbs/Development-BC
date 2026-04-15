@@ -13,8 +13,12 @@ with a single-speed gear reduction.  The model handles:
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 from fsae_sim.vehicle.powertrain import PowertrainConfig
+
+if TYPE_CHECKING:
+    from fsae_sim.vehicle.motor_efficiency import MotorEfficiencyMap
 
 
 class PowertrainModel:
@@ -25,9 +29,16 @@ class PowertrainModel:
     is intentionally delegated to callers via NumPy broadcasting over the
     scalar interface.
 
+    When a ``MotorEfficiencyMap`` is provided, the motor+inverter efficiency
+    varies with RPM and torque (from EMRAX 228 characterization data),
+    combined with a fixed gearbox efficiency.  Otherwise, falls back to
+    the fixed ``config.drivetrain_efficiency`` scalar.
+
     Args:
         config: Frozen ``PowertrainConfig`` dataclass with motor, inverter,
             LVCU, and drivetrain parameters.
+        efficiency_map: Optional 2D efficiency lookup for operating-point-
+            dependent motor+inverter efficiency.
     """
 
     TIRE_RADIUS_M: float = 0.228  # 10-inch FSAE wheel
@@ -38,8 +49,13 @@ class PowertrainModel:
     # than motoring.  A conservative 85 % factor captures this.
     _REGEN_EFFICIENCY_FACTOR: float = 0.85
 
-    def __init__(self, config: PowertrainConfig) -> None:
+    def __init__(
+        self,
+        config: PowertrainConfig,
+        efficiency_map: "MotorEfficiencyMap | None" = None,
+    ) -> None:
         self.config = config
+        self._efficiency_map = efficiency_map
 
         # Pre-compute constants used in every call
         self._torque_limit_nm: float = min(
@@ -52,6 +68,16 @@ class PowertrainModel:
         self._regen_efficiency: float = (
             config.drivetrain_efficiency * self._REGEN_EFFICIENCY_FACTOR
         )
+
+    def _get_efficiency(self, motor_rpm: float, motor_torque_nm: float) -> float:
+        """Total drivetrain efficiency at the given operating point.
+
+        Uses the motor efficiency map when available, otherwise falls
+        back to the fixed ``config.drivetrain_efficiency``.
+        """
+        if self._efficiency_map is not None:
+            return self._efficiency_map.total_efficiency(motor_rpm, motor_torque_nm)
+        return self.config.drivetrain_efficiency
 
     # ------------------------------------------------------------------
     # Speed / RPM conversion
@@ -133,6 +159,50 @@ class PowertrainModel:
 
         # Above maximum RPM
         return 0.0
+
+    def lvcu_torque_command(
+        self, pedal_pct: float, motor_rpm: float, bms_current_limit_a: float,
+    ) -> float:
+        """Motor torque command replicating the real LVCU firmware.
+
+        Faithfully implements the torque command chain from LVCU Code.txt:
+        pedal -> tmap_lut (dead zone remap) -> torque_lut (power-limited
+        ceiling) -> inverter clamp.
+
+        Args:
+            pedal_pct: Raw pedal position in [0.0, 1.0].
+            motor_rpm: Motor shaft speed in RPM.
+            bms_current_limit_a: BMS discharge current limit in A.
+
+        Returns:
+            Commanded motor torque in Nm (>= 0).
+        """
+        cfg = self.config
+
+        # 1. tmap_lut: dead zone remap [V_MIN, V_MAX] -> [0, 1]
+        pedal_clamped = max(cfg.lvcu_pedal_deadzone_low,
+                           min(pedal_pct, cfg.lvcu_pedal_deadzone_high))
+        pedal_remapped = (
+            (pedal_clamped - cfg.lvcu_pedal_deadzone_low)
+            / (cfg.lvcu_pedal_deadzone_high - cfg.lvcu_pedal_deadzone_low)
+        )
+
+        # 2. torque_lut: power-limited torque ceiling
+        omega_term = max(cfg.lvcu_omega_floor, motor_rpm * cfg.lvcu_rpm_scale)
+        power_ceiling_nm = cfg.lvcu_power_constant * bms_current_limit_a / omega_term
+
+        # LVCU torque limit (software cap)
+        torque_ceiling_nm = min(cfg.torque_limit_lvcu_nm, power_ceiling_nm)
+
+        # Overspeed override
+        if motor_rpm >= cfg.lvcu_overspeed_rpm:
+            torque_ceiling_nm = cfg.lvcu_overspeed_torque_nm
+
+        # Inverter hardware limit (independent clamp)
+        torque_ceiling_nm = min(torque_ceiling_nm, cfg.torque_limit_inverter_nm)
+
+        # 3. Final command: remapped pedal * clamped ceiling
+        return pedal_remapped * torque_ceiling_nm
 
     # ------------------------------------------------------------------
     # Torque and force through drivetrain
@@ -251,13 +321,23 @@ class PowertrainModel:
         p_mechanical = motor_torque_nm * omega  # W
 
         if p_mechanical >= 0.0:
-            # Motoring: battery must supply more than mechanical output
-            if self.config.drivetrain_efficiency > 0.0:
-                return p_mechanical / self.config.drivetrain_efficiency
+            # Motoring: battery must supply more than mechanical output.
+            # Use operating-point-dependent efficiency when available.
+            eta = self._get_efficiency(motor_rpm, motor_torque_nm)
+            if eta > 0.0:
+                return p_mechanical / eta
             return 0.0
         else:
-            # Regen: battery receives less than mechanical input due to losses
-            return p_mechanical * self._regen_efficiency
+            # Regen: battery receives less than mechanical input due to losses.
+            # Use operating-point efficiency for regen too.
+            if self._efficiency_map is not None:
+                eta_regen = (
+                    self._efficiency_map.total_efficiency(motor_rpm, abs(motor_torque_nm))
+                    * self._REGEN_EFFICIENCY_FACTOR
+                )
+            else:
+                eta_regen = self._regen_efficiency
+            return p_mechanical * eta_regen
 
     def pack_current(self, electrical_power_w: float, pack_voltage_v: float) -> float:
         """Pack current from electrical power and instantaneous pack voltage.

@@ -491,11 +491,10 @@ def collapse_to_zones(
 
         prev_was_curved = is_curved
 
-        # Compute observed max speed for this zone (p90 across segments)
+        # Compute observed mean speed for this zone
         if "mean_speed_kmh" in segment_actions.columns:
             zone_speeds = segment_actions["mean_speed_kmh"].values[z_start:z_end + 1]
-            # Use 90th percentile + small margin as the speed cap
-            max_speed_kmh = float(np.percentile(zone_speeds, 90)) * 1.05
+            max_speed_kmh = float(np.mean(zone_speeds))
             max_speed_ms = max_speed_kmh / 3.6
         else:
             max_speed_ms = 0.0

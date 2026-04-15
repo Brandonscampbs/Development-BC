@@ -4,6 +4,7 @@ import csv
 import io
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 
@@ -86,6 +87,51 @@ def load_aim_csv(path: str | Path) -> tuple[dict[str, str], pd.DataFrame]:
     df.attrs["metadata"] = metadata
 
     return metadata, df
+
+
+def load_cleaned_csv(path: str | Path) -> tuple[dict[str, str], pd.DataFrame]:
+    """Load a cleaned AiM telemetry CSV (no AiM metadata headers).
+
+    Expected format:
+    - Row 1: column headers
+    - Row 2: units (skipped)
+    - Row 3+: data
+
+    Key differences from the raw AiM export:
+    - Speed is in ``LFspeed`` (front wheel speed sensor, km/h), not ``GPS Speed``
+    - No ``Distance on GPS Speed`` column — computed via trapezoidal integration
+    - No ``GPS PosAccuracy`` or ``GPS Radius`` columns
+    - Encoding is latin-1 (°C symbol)
+
+    Adds compatibility columns so downstream code works unchanged:
+    - ``GPS Speed`` = ``LFspeed``
+    - ``Distance on GPS Speed`` = cumulative integral of speed
+
+    Returns:
+        metadata: empty dict (no metadata in cleaned format)
+        df: DataFrame with numeric columns and compatibility aliases.
+    """
+    path = Path(path)
+    df = pd.read_csv(path, skiprows=[1], encoding="latin-1")
+
+    # Convert all columns to numeric
+    for col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Fill the rare NaN in LFspeed by interpolation
+    if df["LFspeed"].isna().any():
+        df["LFspeed"] = df["LFspeed"].interpolate().bfill().ffill()
+
+    # Add compatibility columns
+    df["GPS Speed"] = df["LFspeed"]
+
+    # Compute cumulative distance from speed (trapezoidal integration)
+    time = df["Time"].values
+    speed_ms = df["LFspeed"].values / 3.6
+    dt = np.diff(time, prepend=time[0])
+    df["Distance on GPS Speed"] = np.cumsum(speed_ms * dt)
+
+    return {}, df
 
 
 def load_voltt_csv(path: str | Path) -> pd.DataFrame:

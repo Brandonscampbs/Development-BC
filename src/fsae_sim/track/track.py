@@ -78,8 +78,9 @@ class Track:
     @classmethod
     def from_telemetry(
         cls,
-        aim_csv_path: str | Path,
+        aim_csv_path: str | Path | None = None,
         *,
+        df: pd.DataFrame | None = None,
         bin_size_m: float = _SEGMENT_BIN_M,
         name: str = "Michigan Endurance",
     ) -> "Track":
@@ -89,19 +90,20 @@ class Track:
         endurance run, bins it into ``bin_size_m``-metre segments, and
         computes signed curvature and grade for each segment.
 
+        Can accept either a file path (loaded via ``load_aim_csv``) or a
+        pre-loaded DataFrame.
+
         Algorithm
         ---------
         1. Load the AiM CSV via :func:`fsae_sim.data.loader.load_aim_csv`.
         2. Filter to rows where the GPS fix is reliable:
-           ``GPS Speed > 5 km/h``, ``GPS PosAccuracy != 200`` (cold-fix
-           sentinel), and ``GPS Radius != 10000`` (straight/uncertain
-           sentinel).
+           ``GPS Speed > 5 km/h``, and if available,
+           ``GPS PosAccuracy != 200`` and ``GPS Radius != 10000``.
         3. Detect start/finish crossings as upward crossings of the median
            latitude, restricted to the longitude band shared by all
            consistent crossings.
-        4. Isolate the **second** crossing-to-crossing interval (the first
-           crossing-to-crossing interval is short because the GPS fix was
-           just acquired).
+        4. Isolate a crossing-to-crossing interval where GPS LatAcc data
+           is available.
         5. Bin that lap into ``bin_size_m``-metre windows.
         6. Per bin:
 
@@ -114,6 +116,10 @@ class Track:
 
         Args:
             aim_csv_path: Path to the AiM Race Studio CSV export.
+                Mutually exclusive with ``df``.
+            df: Pre-loaded AiM DataFrame (e.g. from ``load_cleaned_csv``).
+                Must contain GPS Speed, Distance on GPS Speed, GPS Latitude,
+                GPS Longitude, GPS LatAcc columns.
             bin_size_m: Length of each output segment in metres.
                 Defaults to 5 m.
             name: Name stored on the returned :class:`Track` object.
@@ -127,16 +133,16 @@ class Track:
             ValueError: If no segments are produced (empty lap after
                 filtering).
         """
-        from fsae_sim.data.loader import load_aim_csv  # local import avoids circular
-
-        _metadata, df = load_aim_csv(aim_csv_path)
+        if df is None:
+            from fsae_sim.data.loader import load_aim_csv  # local import avoids circular
+            _metadata, df = load_aim_csv(aim_csv_path)
 
         # ---- 1. Filter to reliable GPS rows --------------------------------
-        good_mask: pd.Series = (
-            (df["GPS Speed"] > _GPS_SPEED_MIN_KMH)
-            & (df["GPS PosAccuracy"] != _GPS_POS_ACC_BAD)
-            & (df["GPS Radius"] != _GPS_RADIUS_STRAIGHT)
-        )
+        good_mask: pd.Series = df["GPS Speed"] > _GPS_SPEED_MIN_KMH
+        if "GPS PosAccuracy" in df.columns:
+            good_mask = good_mask & (df["GPS PosAccuracy"] != _GPS_POS_ACC_BAD)
+        if "GPS Radius" in df.columns:
+            good_mask = good_mask & (df["GPS Radius"] != _GPS_RADIUS_STRAIGHT)
         good: pd.DataFrame = df[good_mask].reset_index(drop=True)
 
         lat: np.ndarray = good["GPS Latitude"].values
@@ -170,19 +176,29 @@ class Track:
                 "need at least 2 to isolate a complete lap."
             )
 
-        # ---- 3. Isolate the first *complete* lap ---------------------------
-        # sf_crossings[0] is often short (GPS just acquired); use [1] → [2].
-        lap_index = 1 if len(sf_crossings) >= 3 else 0
-        lap_start_dist: float = sf_crossings[lap_index][1]
-        lap_end_dist: float = sf_crossings[lap_index + 1][1]
+        # ---- 3. Isolate a complete lap with GPS LatAcc data -----------------
+        # Pick the first crossing-to-crossing interval that has GPS LatAcc
+        # data available (some cleaned datasets have NaN LatAcc early on).
+        lat_acc_col: np.ndarray = good["GPS LatAcc"].values
+        lap_df: pd.DataFrame = pd.DataFrame()
+        lap_start_dist: float = 0.0
 
-        lap_mask: np.ndarray = (cum_dist >= lap_start_dist) & (cum_dist <= lap_end_dist)
-        lap_df: pd.DataFrame = good[lap_mask].reset_index(drop=True)
+        for lap_index in range(len(sf_crossings) - 1):
+            _start_dist = sf_crossings[lap_index][1]
+            _end_dist = sf_crossings[lap_index + 1][1]
+            _mask = (cum_dist >= _start_dist) & (cum_dist <= _end_dist)
+            _lat_acc_in_lap = lat_acc_col[_mask]
+            # Require at least 80% of samples to have valid LatAcc
+            valid_frac = np.sum(~np.isnan(_lat_acc_in_lap)) / max(len(_lat_acc_in_lap), 1)
+            if valid_frac >= 0.8:
+                lap_start_dist = _start_dist
+                lap_df = good[_mask].reset_index(drop=True)
+                break
 
         if lap_df.empty:
             raise ValueError(
-                "Lap extraction produced an empty DataFrame. "
-                f"Check distance range {lap_start_dist:.1f}–{lap_end_dist:.1f} m."
+                "No lap with sufficient GPS LatAcc data found. "
+                "Need at least 80% valid samples in one crossing-to-crossing interval."
             )
 
         # ---- 4. Normalise distance within lap ------------------------------
@@ -190,8 +206,16 @@ class Track:
 
         # ---- 5. Pre-compute per-sample curvature and grade -----------------
         v_ms: np.ndarray = lap_df["GPS Speed"].values * (1_000.0 / 3_600.0)
-        a_lat_ms2: np.ndarray = lap_df["GPS LatAcc"].values * 9.81
-        slope_deg: np.ndarray = lap_df["GPS Slope"].values
+        a_lat_raw: np.ndarray = lap_df["GPS LatAcc"].values.copy()
+        # Fill any remaining NaN in LatAcc with 0 (straight assumption)
+        a_lat_raw = np.nan_to_num(a_lat_raw, nan=0.0)
+        a_lat_ms2: np.ndarray = a_lat_raw * 9.81
+        if "GPS Slope" in lap_df.columns:
+            slope_deg: np.ndarray = np.nan_to_num(
+                lap_df["GPS Slope"].values, nan=0.0,
+            )
+        else:
+            slope_deg = np.zeros(len(lap_df))
 
         # κ = a_lat / v²  (signed: positive = right turn, negative = left turn)
         # Zero for very low speeds to avoid division noise.

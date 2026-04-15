@@ -289,7 +289,8 @@ def _extract_per_lap_then_aggregate(
                 lap_intensities[seg.index] = float(np.clip(seg_brake / brake_norm, 0.0, 1.0))
             elif seg_throttle > throttle_threshold:
                 lap_actions[seg.index] = 1
-                # Use torque-based intensity if available
+                # Use torque-based intensity if available — this is the
+                # effective torque fraction after LVCU processing.
                 if lap_torque is not None:
                     seg_torque = float(np.median(np.clip(lap_torque[mask], 0, None)))
                     lap_intensities[seg.index] = float(np.clip(
